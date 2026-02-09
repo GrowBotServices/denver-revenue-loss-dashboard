@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Denver Services - Revenue Leakage Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.8.0/Recharts.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0a; font-family: system-ui, -apple-system, sans-serif; }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(20px) } to { opacity:1; transform:translateY(0) } }
+  @keyframes countUp { from { opacity:0; transform:scale(0.8) } to { opacity:1; transform:scale(1) } }
+  @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.5 } }
+  @keyframes slideIn { from { opacity:0; transform:translateX(-10px) } to { opacity:1; transform:translateX(0) } }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  .fade-up { animation: fadeUp 0.6s ease-out forwards; opacity:0 }
+  .card { transition: all 0.3s ease }
+  .card:hover { transform:translateY(-2px); box-shadow:0 8px 32px rgba(245,158,11,0.08) }
+  .row { transition: background 0.2s; cursor:pointer }
+  .row:hover { background:#1a1a1a !important }
+  .tbtn { transition:all 0.2s; cursor:pointer }
+  .tbtn:hover { background:#262626 !important }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, Fragment } = React;
+const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } = Recharts;
+
+const PRICE_MAP = {
+  "Boiler Service": { min: 90, avg: 90 },
+  "Gas Safety Certificate": { min: 90, avg: 90 },
+  "BS & GSC Combined": { min: 126, avg: 126 },
+  "Oil Boiler Service": { min: 180, avg: 180 },
+  "LPG Boiler Service": { min: 90, avg: 90 },
+  "Cylinder Service": { min: 90, avg: 90 },
+  "ASHP Service": { min: 180, avg: 180 },
+  "ASHP Breakdown": { min: 108, avg: 150 },
+  "WAU Service": { min: 120, avg: 120 },
+  "Boiler Breakdown": { min: 108, avg: 180 },
+  "Plumbing Repair": { min: 108, avg: 160 },
+  "Boiler Replacement Quote": { min: 2500, avg: 3250 },
+  "Heat Pump Quote": { min: 3000, avg: 5000 },
+  "Central Heating Issue": { min: 108, avg: 150 },
+  "Gas Fire Service": { min: 90, avg: 90 },
+  "Landlord GSC": { min: 96, avg: 102 },
+  "Landlord BS & GSC": { min: 126, avg: 132 },
+  "General Enquiry": { min: 90, avg: 120 },
+};
+
+const inferJobType = (description, boilerType) => {
+  const desc = (description || "").toLowerCase();
+  const boiler = (boilerType || "").toLowerCase();
+  if (desc.match(/replac|new boiler|install|upgrade|swap|quotat|quote/)) {
+    if (desc.match(/heat pump|ashp|air source/)) return "Heat Pump Quote";
+    return "Boiler Replacement Quote";
+  }
+  if (desc.match(/heat pump|ashp|air source/)) {
+    if (desc.match(/break|fault|not work|no heat|error|issue|repair/)) return "ASHP Breakdown";
+    return "ASHP Service";
+  }
+  if (desc.match(/warm air|wau/) || boiler.match(/warm air/)) return "WAU Service";
+  if (desc.match(/gas fire|fire service/)) return "Gas Fire Service";
+  if (desc.match(/cylinder|megaflow|unvented/)) return "Cylinder Service";
+  if (desc.match(/plumb|leak|tap|toilet|drain|stop ?cock|overflow|drip|pipe|ball ?valve|cistern|shower/)) return "Plumbing Repair";
+  if (desc.match(/radiat|trv|thermostat|central heat|zone valve|motorised|heating issue|some.*(not|aren't) work/)) return "Central Heating Issue";
+  if (desc.match(/break|fault|not work|no (heat|hot water)|error|emergency|cut.?out|intermittent|stopped|noise|bang|leak.*(boiler)|pressure.*(drop|low|keep)/)) return "Boiler Breakdown";
+  if (desc.match(/service.*(safety|cert|cp12|gas safe)|safety.*(service)|bs.*(gsc|gc)|gsc.*(bs)|both/)) {
+    if (desc.match(/landlord|tenant|letting|agent|rental|property manage/)) return "Landlord BS & GSC";
+    return "BS & GSC Combined";
+  }
+  if (desc.match(/cp12|gas safe|safety cert|gsc|certificate|landlord.*gas|gas.*landlord/)) {
+    if (desc.match(/landlord|tenant|letting|agent|rental/)) return "Landlord GSC";
+    return "Gas Safety Certificate";
+  }
+  if (desc.match(/service|annual|routine|check|maintain/)) {
+    if (boiler.match(/oil/)) return "Oil Boiler Service";
+    if (boiler.match(/lpg/)) return "LPG Boiler Service";
+    return "Boiler Service";
+  }
+  if (boiler.match(/oil/)) return "Oil Boiler Service";
+  if (boiler.match(/lpg/)) return "LPG Boiler Service";
+  return "General Enquiry";
+};
+
+const inferCaptureType = (dateStr, callSource) => {
+  const source = (callSource || "").toLowerCase();
+  if (source.match(/reactivat|reminder|campaign|sms|email|auto/)) return "reactivation";
+  if (source.match(/chat|web|website|online|form/)) return "speed-response";
+  if (source.match(/overflow|busy|transfer|voicemail/)) return "overflow";
+  if (source.match(/out.?of.?hours|after.?hours|evening|weekend|ooh/)) return "out-of-hours";
+  if (dateStr) {
+    const date = new Date(dateStr);
+    const hour = date.getHours();
+    const day = date.getDay();
+    if (day === 0 || day === 6) return "out-of-hours";
+    if (hour < 8 || hour >= 17) return "out-of-hours";
+    if (hour >= 12 && hour < 13) return "overflow";
+  }
+  return "overflow";
+};
+
+const fetchLiveData = async () => {
+  const resp = await fetch("/api/monday");
+  if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+  const data = await resp.json();
+  if (data.error) throw new Error(data.error);
+  if (!data?.data?.boards?.[0]?.items_page?.items) throw new Error("No board data");
+  return data.data.boards[0].items_page.items.map((item) => {
+    const col = (id) => item.column_values.find((c) => c.id === id)?.text || "";
+    const colVal = (id) => { const raw = item.column_values.find((c) => c.id === id)?.value; if (!raw) return ""; try { return JSON.parse(raw); } catch { return raw; } };
+    const description = col("long_text_mkyw56xd");
+    const boilerType = col("dropdown_mkyw8ax3");
+    const callSource = col("text_mkyw1az7");
+    const dateText = col("date_mkyw2x9h");
+    const statusRaw = colVal("color_mkzpja00");
+    const statusLabel = typeof statusRaw === "object" ? statusRaw?.label || col("color_mkzpja00") : col("color_mkzpja00");
+    const dateVal = dateText ? new Date(dateText) : new Date(item.created_at);
+    const jobType = inferJobType(description, boilerType);
+    const captureType = inferCaptureType(dateText || item.created_at, callSource);
+    const estimatedValue = (PRICE_MAP[jobType] || PRICE_MAP["General Enquiry"]).avg;
+    const sl = (statusLabel || "").toLowerCase();
+    let status = "pending";
+    if (sl.match(/book|confirm|complete|done|assign|deploy|schedul/)) status = "booked";
+    else if (sl.match(/cancel|lost|reject|no.?show|decline/)) status = "cancelled";
+    return { id: item.id, date: dateVal.toISOString(), customerName: item.name || "Unknown", phone: col("phone_mkywvsvx"), postcode: col("text_mkywvcy1"), description, boilerType, callSource, jobType, captureType, estimatedValue, status };
+  });
+};
+
+const generateSampleData = () => {
+  const calls = [];
+  const now = new Date();
+  const jobs = ["Boiler Service","Boiler Service","Boiler Service","Gas Safety Certificate","Gas Safety Certificate","BS & GSC Combined","BS & GSC Combined","BS & GSC Combined","Boiler Breakdown","Boiler Breakdown","Boiler Breakdown","Plumbing Repair","Plumbing Repair","ASHP Service","Landlord BS & GSC","Landlord BS & GSC","Landlord GSC","Boiler Replacement Quote","Heat Pump Quote","Central Heating Issue","Central Heating Issue","Oil Boiler Service","WAU Service","Cylinder Service"];
+  const cw = [["out-of-hours",0.3],["overflow",0.35],["reactivation",0.2],["speed-response",0.15]];
+  const fn = ["Sarah","James","Emma","David","Lucy","Tom","Claire","Mark","Helen","Paul","Rachel","Steve","Karen","Mike","Jane","Chris","Debbie","Andy","Fiona","Rob"];
+  const ln = ["Smith","Jones","Williams","Brown","Taylor","Davies","Wilson","Evans","Thomas","Roberts","Johnson","Walker","Wright","Robinson","Thompson"];
+  for (let d = 0; d < 28; d++) {
+    const n = Math.floor(Math.random() * 4) + 2;
+    for (let c = 0; c < n; c++) {
+      const dt = new Date(now); dt.setDate(dt.getDate() - d); dt.setHours(Math.floor(Math.random() * 14) + 7, Math.floor(Math.random() * 60), 0, 0);
+      let cap; let r = Math.random(); let cu = 0;
+      for (const [t, w] of cw) { cu += w; if (r <= cu) { cap = t; break; } }
+      if (cap === "out-of-hours") { dt.setHours(Math.random() > 0.5 ? Math.floor(Math.random() * 3) + 18 : 7); if (Math.random() > 0.6) dt.setDate(dt.getDate() - (dt.getDay() === 0 ? 0 : 6 - dt.getDay())); }
+      const jt = jobs[Math.floor(Math.random() * jobs.length)]; const p = PRICE_MAP[jt];
+      calls.push({ id: `s-${d}-${c}`, date: dt.toISOString(), customerName: `${fn[Math.floor(Math.random() * fn.length)]} ${ln[Math.floor(Math.random() * ln.length)]}`, jobType: jt, captureType: cap, estimatedValue: p.min + Math.floor(Math.random() * (p.avg - p.min + 30)), status: Math.random() > 0.15 ? "booked" : "pending", description: "", boilerType: "", callSource: "", phone: "", postcode: "" });
+    }
+  }
+  return calls.sort((a, b) => new Date(b.date) - new Date(a.date));
+};
+
+const CAPTURE_LABELS = {
+  "out-of-hours": { label: "Out of Hours", desc: "Evenings, weekends and bank holidays", icon: "\u{1F319}" },
+  "overflow": { label: "Overflow", desc: "Office busy or staff unavailable", icon: "\u{1F4DE}" },
+  "reactivation": { label: "Reactivation", desc: "Automated reminders to existing customers", icon: "\u{1F504}" },
+  "speed-response": { label: "Instant Response", desc: "Answered before customer moved on", icon: "\u{26A1}" },
+};
+const PIE_COLORS = ["#f59e0b", "#ef4444", "#22c55e", "#3b82f6"];
+const GROWBOT_COST = 1997;
+const fmt = (v) => "\u00A3" + v.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const fmtD = (iso) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+const fmtT = (iso) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+const CTip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return React.createElement("div", { style: { background: "#1a1a1a", border: "1px solid #333", borderRadius: 8, padding: "10px 14px", fontSize: 13 } },
+    React.createElement("p", { style: { color: "#999", margin: 0, marginBottom: 4 } }, label),
+    payload.map((p, i) => React.createElement("p", { key: i, style: { color: p.color || "#f59e0b", margin: 0 } }, p.name, ": ", fmt(p.value)))
+  );
+};
+
+function RevenueDashboard() {
+  const [calls, setCalls] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [src, setSrc] = useState("loading");
+  const [error, setError] = useState(null);
+  const [range, setRange] = useState("4weeks");
+  const [hovered, setHovered] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const d = await fetchLiveData();
+        if (d && d.length > 0) { setCalls(d); setSrc("live"); }
+        else { setCalls(generateSampleData()); setSrc("sample"); setError("Board returned 0 items"); }
+      } catch (e) {
+        console.error("Fetch failed:", e);
+        setCalls(generateSampleData());
+        setSrc("sample");
+        setError(e.message);
+      } finally { setLoading(false); }
+    })();
+  }, []);
+
+  const filtered = useMemo(() => {
+    const days = { "1week": 7, "2weeks": 14, "4weeks": 28 }[range] || 28;
+    const cut = new Date(); cut.setDate(cut.getDate() - days);
+    return calls.filter(c => new Date(c.date) >= cut && c.status !== "cancelled");
+  }, [calls, range]);
+
+  const stats = useMemo(() => {
+    const rev = filtered.reduce((s, c) => s + c.estimatedValue, 0);
+    const total = filtered.length;
+    const booked = filtered.filter(c => c.status === "booked").length;
+    const byCap = {};
+    for (const t of Object.keys(CAPTURE_LABELS)) {
+      const tc = filtered.filter(c => c.captureType === t);
+      byCap[t] = { count: tc.length, revenue: tc.reduce((s, c) => s + c.estimatedValue, 0) };
+    }
+    const byJob = {};
+    for (const c of filtered) { if (!byJob[c.jobType]) byJob[c.jobType] = { count: 0, revenue: 0 }; byJob[c.jobType].count++; byJob[c.jobType].revenue += c.estimatedValue; }
+    const daily = {};
+    for (const c of filtered) { const d = fmtD(c.date); if (!daily[d]) daily[d] = { day: d, revenue: 0, calls: 0 }; daily[d].revenue += c.estimatedValue; daily[d].calls++; }
+    const wm = { "1week": 1, "2weeks": 0.5, "4weeks": 0.25 }[range] || 0.25;
+    const wa = rev * wm; const mo = wa * 4.33; const yr = mo * 12;
+    const rd = { "1week": 0.25, "2weeks": 0.5, "4weeks": 1 }[range] || 1;
+    const roi = rev / (GROWBOT_COST * rd);
+    return { rev, total, booked, rate: total > 0 ? ((booked / total) * 100).toFixed(1) : "0", byCap, byJob, daily: Object.values(daily).reverse(), mo, yr, roi, avg: total > 0 ? Math.round(rev / total) : 0 };
+  }, [filtered, range]);
+
+  const pieData = useMemo(() => Object.entries(stats.byCap).map(([k, v]) => ({ name: CAPTURE_LABELS[k].label, value: v.revenue, count: v.count })), [stats.byCap]);
+  const barData = useMemo(() => Object.entries(stats.byJob).sort((a, b) => b[1].revenue - a[1].revenue).slice(0, 8).map(([n, d]) => ({ name: n.length > 20 ? n.slice(0, 18) + "..." : n, revenue: d.revenue, count: d.count })), [stats.byJob]);
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#0a0a0a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ width: 48, height: 48, border: "3px solid #222", borderTopColor: "#f59e0b", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 20px" }} />
+          <p style={{ color: "#666", fontSize: 13, letterSpacing: 2, textTransform: "uppercase", fontFamily: "monospace" }}>Connecting to Monday.com...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0a0a", color: "#e5e5e5", fontFamily: "system-ui, -apple-system, sans-serif", padding: "0 0 60px" }}>
+
+      {/* HEADER */}
+      <div style={{ background: "linear-gradient(180deg,#111 0%,#0a0a0a 100%)", borderBottom: "1px solid #1a1a1a", padding: "24px 28px 20px" }}>
+        <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                <div style={{ width: 9, height: 9, borderRadius: "50%", background: src === "live" ? "#22c55e" : "#f59e0b", boxShadow: `0 0 8px ${src === "live" ? "rgba(34,197,94,0.5)" : "rgba(245,158,11,0.5)"}`, animation: "pulse 2s infinite" }} />
+                <span style={{ color: "#666", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", fontFamily: "monospace" }}>
+                  {src === "live" ? "Live \u00B7 Monday.com" : "Sample Data"} \u00B7 Denver Services
+                </span>
+              </div>
+              <h1 style={{ fontSize: 24, fontWeight: 700, color: "#fff", margin: 0, letterSpacing: -0.5 }}>Revenue Leakage Dashboard</h1>
+              <p style={{ color: "#555", fontSize: 13, margin: "4px 0 0", maxWidth: 500 }}>Revenue captured by Jessica that would have otherwise been lost.</p>
+            </div>
+            <div style={{ display: "flex", gap: 4, background: "#111", borderRadius: 10, padding: 3, border: "1px solid #1a1a1a" }}>
+              {[{ key: "1week", label: "7 Days" }, { key: "2weeks", label: "14 Days" }, { key: "4weeks", label: "4 Weeks" }].map(({ key, label }) => (
+                <button key={key} className="tbtn" onClick={() => setRange(key)} style={{ padding: "7px 14px", borderRadius: 7, border: "none", background: range === key ? "#f59e0b" : "transparent", color: range === key ? "#000" : "#666", fontSize: 12, fontWeight: range === key ? 600 : 400, fontFamily: "system-ui, sans-serif" }}>{label}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "0 28px" }}>
+
+        {error && (
+          <div className="fade-up" style={{ marginTop: 16, background: "#1a1a0f", border: "1px solid #2a2a1a", borderRadius: 10, padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 16 }}>{"\u26A0\uFE0F"}</span>
+            <p style={{ margin: 0, color: "#f59e0b", fontSize: 12 }}><strong>Using sample data.</strong> {error}</p>
+          </div>
+        )}
+
+        {src === "live" && (
+          <div className="fade-up" style={{ marginTop: 16, background: "#0f1a0f", border: "1px solid #1a2a1a", borderRadius: 10, padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 16 }}>{"\u2705"}</span>
+            <p style={{ margin: 0, color: "#6ee7b7", fontSize: 12 }}><strong>Connected to Monday.com.</strong> Showing {calls.length} items from your board.</p>
+          </div>
+        )}
+
+        {/* HERO */}
+        <div className="fade-up" style={{ marginTop: 16, background: "linear-gradient(135deg,#1a1207 0%,#111 50%,#0f1a0f 100%)", border: "1px solid #2a2a1a", borderRadius: 14, padding: "28px 32px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 20 }}>
+          <div>
+            <p style={{ color: "#888", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: 1.5, fontFamily: "monospace", fontSize: 10 }}>Total Revenue Captured</p>
+            <div style={{ fontSize: 48, fontWeight: 700, color: "#f59e0b", letterSpacing: -2, lineHeight: 1, animation: "countUp 0.8s ease-out" }}>{fmt(stats.rev)}</div>
+            <p style={{ color: "#555", fontSize: 13, margin: "8px 0 0" }}>From {stats.total} calls \u00B7 {stats.rate}% booked \u00B7 {fmt(stats.avg)} avg value</p>
+          </div>
+          <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
+            {[{ l: "Monthly Projection", v: fmt(stats.mo), c: "#fff" }, { l: "Annual Projection", v: fmt(stats.yr), c: "#fff" }, { l: "ROI vs Cost", v: `${stats.roi.toFixed(1)}x`, c: "#22c55e" }].map(s => (
+              <div key={s.l} style={{ textAlign: "right" }}>
+                <p style={{ color: "#666", fontSize: 10, margin: "0 0 3px", textTransform: "uppercase", letterSpacing: 1, fontFamily: "monospace" }}>{s.l}</p>
+                <p style={{ color: s.c, fontSize: 22, fontWeight: 600, margin: 0 }}>{s.v}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ROI */}
+        <div className="fade-up" style={{ marginTop: 12, background: "#0f1a0f", border: "1px solid #1a2a1a", borderRadius: 10, padding: "14px 20px", display: "flex", alignItems: "center", gap: 14, animationDelay: "0.1s" }}>
+          <span style={{ fontSize: 18 }}>{"\u{1F4B0}"}</span>
+          <p style={{ margin: 0, color: "#6ee7b7", fontSize: 13 }}>
+            <strong>GrowBot costs {fmt(GROWBOT_COST)}/month.</strong> Jessica has captured {fmt(stats.rev)} in revenue that would have leaked - that's a <strong>{stats.roi.toFixed(1)}x return</strong> on your investment this period.
+          </p>
+        </div>
+
+        {/* CAPTURE CARDS */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 24 }}>
+          {Object.entries(CAPTURE_LABELS).map(([key, meta], i) => {
+            const d = stats.byCap[key] || { count: 0, revenue: 0 };
+            return (
+              <div key={key} className="card fade-up" style={{ background: hovered === key ? "#1a1a1a" : "#111", border: `1px solid ${hovered === key ? PIE_COLORS[i] + "44" : "#1a1a1a"}`, borderRadius: 12, padding: 20, cursor: "default", animationDelay: `${0.1 + i * 0.08}s` }} onMouseEnter={() => setHovered(key)} onMouseLeave={() => setHovered(null)}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <span style={{ fontSize: 22 }}>{meta.icon}</span>
+                  <span style={{ background: PIE_COLORS[i] + "18", color: PIE_COLORS[i], padding: "3px 9px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>{d.count} calls</span>
+                </div>
+                <p style={{ color: "#fff", fontSize: 12, fontWeight: 600, margin: "0 0 3px" }}>{meta.label}</p>
+                <p style={{ color: "#555", fontSize: 11, margin: "0 0 12px", lineHeight: 1.4 }}>{meta.desc}</p>
+                <p style={{ color: PIE_COLORS[i], fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: -1 }}>{fmt(d.revenue)}</p>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* CHARTS */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 24 }}>
+          <div className="fade-up" style={{ background: "#111", border: "1px solid #1a1a1a", borderRadius: 12, padding: "20px 20px 12px", animationDelay: "0.3s" }}>
+            <h3 style={{ color: "#fff", fontSize: 14, fontWeight: 600, margin: "0 0 16px" }}>Daily Revenue Captured</h3>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={stats.daily}>
+                <defs><linearGradient id="rg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#f59e0b" stopOpacity={0.3} /><stop offset="100%" stopColor="#f59e0b" stopOpacity={0} /></linearGradient></defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
+                <XAxis dataKey="day" tick={{ fill: "#555", fontSize: 10 }} axisLine={{ stroke: "#1a1a1a" }} tickLine={false} />
+                <YAxis tick={{ fill: "#555", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => "\u00A3" + v} />
+                <Tooltip content={<CTip />} />
+                <Area type="monotone" dataKey="revenue" stroke="#f59e0b" strokeWidth={2} fill="url(#rg)" name="Revenue" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="fade-up" style={{ background: "#111", border: "1px solid #1a1a1a", borderRadius: 12, padding: 20, animationDelay: "0.35s" }}>
+            <h3 style={{ color: "#fff", fontSize: 14, fontWeight: 600, margin: "0 0 10px" }}>Revenue by Capture Type</h3>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <ResponsiveContainer width="50%" height={190}>
+                <PieChart><Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={78} paddingAngle={3} dataKey="value" stroke="none">{pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i]} />)}</Pie><Tooltip content={<CTip />} /></PieChart>
+              </ResponsiveContainer>
+              <div style={{ flex: 1 }}>
+                {pieData.map((e, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+                    <div style={{ width: 9, height: 9, borderRadius: 2, background: PIE_COLORS[i], flexShrink: 0 }} />
+                    <div>
+                      <p style={{ color: "#ccc", fontSize: 12, margin: 0 }}>{e.name}</p>
+                      <p style={{ color: "#666", fontSize: 10, margin: 0 }}>{fmt(e.value)} \u00B7 {e.count} calls</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* BAR */}
+        <div className="fade-up" style={{ background: "#111", border: "1px solid #1a1a1a", borderRadius: 12, padding: "20px 20px 12px", marginTop: 12, animationDelay: "0.4s" }}>
+          <h3 style={{ color: "#fff", fontSize: 14, fontWeight: 600, margin: "0 0 16px" }}>Revenue by Job Type (Top 8)</h3>
+          <ResponsiveContainer width="100%" height={230}>
+            <BarChart data={barData} layout="vertical" margin={{ left: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" horizontal={false} />
+              <XAxis type="number" tick={{ fill: "#555", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => "\u00A3" + v} />
+              <YAxis type="category" dataKey="name" tick={{ fill: "#999", fontSize: 11 }} axisLine={false} tickLine={false} width={140} />
+              <Tooltip content={<CTip />} />
+              <Bar dataKey="revenue" fill="#f59e0b" radius={[0, 5, 5, 0]} name="Revenue" barSize={18} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* TABLE */}
+        <div className="fade-up" style={{ background: "#111", border: "1px solid #1a1a1a", borderRadius: 12, padding: 20, marginTop: 12, animationDelay: "0.45s" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ color: "#fff", fontSize: 14, fontWeight: 600, margin: 0 }}>Recent Captured Calls</h3>
+            <span style={{ color: "#555", fontSize: 11, fontFamily: "monospace" }}>{src === "live" ? "Live from Monday.com" : "Sample data"} \u00B7 Latest 15</span>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 2px" }}>
+              <thead>
+                <tr>
+                  {["Date", "Time", "Customer", "Job Type", "Capture Reason", "Value", "Status"].map(th => (
+                    <th key={th} style={{ textAlign: "left", padding: "7px 10px", color: "#555", fontSize: 10, fontWeight: 500, textTransform: "uppercase", letterSpacing: 1, fontFamily: "monospace", borderBottom: "1px solid #1a1a1a" }}>{th}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.slice(0, 15).map((call, i) => {
+                  const ci = Object.keys(CAPTURE_LABELS).indexOf(call.captureType);
+                  const isEx = expanded === call.id;
+                  return (
+                    <Fragment key={call.id}>
+                      <tr className="row" onClick={() => setExpanded(isEx ? null : call.id)} style={{ animation: `slideIn 0.3s ease-out ${i * 0.03}s forwards`, opacity: 0 }}>
+                        <td style={{ padding: "9px 10px", color: "#999", fontSize: 12 }}>{fmtD(call.date)}</td>
+                        <td style={{ padding: "9px 10px", color: "#999", fontSize: 12, fontFamily: "monospace" }}>{fmtT(call.date)}</td>
+                        <td style={{ padding: "9px 10px", color: "#ddd", fontSize: 12, fontWeight: 500 }}>{call.customerName}</td>
+                        <td style={{ padding: "9px 10px", color: "#ccc", fontSize: 12 }}>{call.jobType}</td>
+                        <td style={{ padding: "9px 10px" }}>
+                          <span style={{ background: PIE_COLORS[ci] + "18", color: PIE_COLORS[ci], padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 500 }}>{CAPTURE_LABELS[call.captureType]?.label}</span>
+                        </td>
+                        <td style={{ padding: "9px 10px", color: "#f59e0b", fontSize: 13, fontWeight: 600, fontFamily: "monospace" }}>{fmt(call.estimatedValue)}</td>
+                        <td style={{ padding: "9px 10px" }}>
+                          <span style={{ background: call.status === "booked" ? "#0f2a0f" : "#2a1a0f", color: call.status === "booked" ? "#22c55e" : "#f59e0b", padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 500 }}>{call.status === "booked" ? "Booked" : "Pending"}</span>
+                        </td>
+                      </tr>
+                      {isEx && (
+                        <tr style={{ animation: "fadeUp 0.3s ease-out" }}>
+                          <td colSpan={7} style={{ padding: "10px 20px 14px", background: "#0d0d0d", borderBottom: "1px solid #1a1a1a" }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+                              {call.description && <div><p style={{ color: "#555", fontSize: 10, margin: "0 0 3px", textTransform: "uppercase", letterSpacing: 1, fontFamily: "monospace" }}>Description</p><p style={{ color: "#ccc", fontSize: 12, margin: 0, lineHeight: 1.5 }}>{call.description}</p></div>}
+                              {call.boilerType && <div><p style={{ color: "#555", fontSize: 10, margin: "0 0 3px", textTransform: "uppercase", letterSpacing: 1, fontFamily: "monospace" }}>Boiler Type</p><p style={{ color: "#ccc", fontSize: 12, margin: 0 }}>{call.boilerType}</p></div>}
+                              {call.callSource && <div><p style={{ color: "#555", fontSize: 10, margin: "0 0 3px", textTransform: "uppercase", letterSpacing: 1, fontFamily: "monospace" }}>Call Source</p><p style={{ color: "#ccc", fontSize: 12, margin: 0 }}>{call.callSource}</p></div>}
+                              {call.postcode && <div><p style={{ color: "#555", fontSize: 10, margin: "0 0 3px", textTransform: "uppercase", letterSpacing: 1, fontFamily: "monospace" }}>Postcode</p><p style={{ color: "#ccc", fontSize: 12, margin: 0 }}>{call.postcode}</p></div>}
+                              <div><p style={{ color: "#555", fontSize: 10, margin: "0 0 3px", textTransform: "uppercase", letterSpacing: 1, fontFamily: "monospace" }}>Value Basis</p><p style={{ color: "#999", fontSize: 11, margin: 0, fontStyle: "italic" }}>Denver price list: "{call.jobType}" = {fmt((PRICE_MAP[call.jobType] || PRICE_MAP["General Enquiry"]).avg)} avg</p></div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* NOTE */}
+        <div className="fade-up" style={{ marginTop: 12, background: "#111", border: "1px solid #1a1a1a", borderRadius: 10, padding: "14px 20px", animationDelay: "0.5s" }}>
+          <p style={{ color: "#444", fontSize: 11, margin: 0, lineHeight: 1.6 }}>
+            <strong style={{ color: "#555" }}>How values are calculated:</strong> Job types are inferred from the Description and Boiler Type fields on Monday.com. Revenue estimates use Denver Services' published price list (inc. VAT where standard). Capture types are determined by call timing and the Call Source field. Click any row to see source data.
+          </p>
+        </div>
+
+        <div style={{ marginTop: 28, padding: "16px 0", borderTop: "1px solid #1a1a1a", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <p style={{ color: "#333", fontSize: 11, margin: 0, fontFamily: "monospace" }}>Denver Services \u00B7 Revenue Leakage Dashboard \u00B7 Powered by GrowBot</p>
+          <p style={{ color: "#333", fontSize: 11, margin: 0, fontFamily: "monospace" }}>{src === "live" ? "Data source: Monday.com \u00B7 Live" : "Sample data \u00B7 Fallback mode"}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<RevenueDashboard />);
+</script>
+</body>
+</html>
