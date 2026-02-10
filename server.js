@@ -5,12 +5,12 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const GHL_BASE = "https://services.leadconnectorhq.com";
+const LOCATION_ID = process.env.GHL_LOCATION_ID || "9cbH521eqCJKNb6Wu2ao";
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// Helper to call GHL API
 async function ghlRequest(endpoint, apiKey, params = {}) {
   const url = new URL(endpoint, GHL_BASE);
   for (const [k, v] of Object.entries(params)) {
@@ -30,13 +30,14 @@ async function ghlRequest(endpoint, apiKey, params = {}) {
   return data;
 }
 
-// Diagnostic endpoint - shows raw GHL data so we can map fields
+// Diagnostic endpoint
 app.get("/api/ghl/diagnose", async (req, res) => {
   const apiKey = process.env.GHL_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: "GHL_API_KEY not set in Render environment variables" });
+  if (!apiKey) return res.status(500).json({ error: "GHL_API_KEY not set" });
 
   try {
     const contacts = await ghlRequest("/contacts/", apiKey, {
+      locationId: LOCATION_ID,
       limit: "20",
       sortBy: "date_added",
       order: "desc",
@@ -44,13 +45,14 @@ app.get("/api/ghl/diagnose", async (req, res) => {
 
     let customFields = null;
     try {
-      customFields = await ghlRequest("/locations/custom-fields", apiKey);
+      customFields = await ghlRequest(`/locations/${LOCATION_ID}/customFields`, apiKey);
     } catch (e) {
       customFields = { error: e.message };
     }
 
     res.json({
       status: "ok",
+      locationId: LOCATION_ID,
       contactCount: contacts?.contacts?.length || 0,
       sampleContacts: (contacts?.contacts || []).slice(0, 5).map((c) => ({
         id: c.id,
@@ -70,7 +72,7 @@ app.get("/api/ghl/diagnose", async (req, res) => {
   }
 });
 
-// Main data endpoint - pulls contacts from GHL, formats for dashboard
+// Main data endpoint
 app.get("/api/monday", async (req, res) => {
   const apiKey = process.env.GHL_API_KEY;
   if (!apiKey) {
@@ -78,23 +80,14 @@ app.get("/api/monday", async (req, res) => {
   }
 
   try {
-    let allContacts = [];
-    let hasMore = true;
-    let page = 1;
+    const batch = await ghlRequest("/contacts/", apiKey, {
+      locationId: LOCATION_ID,
+      limit: "100",
+      sortBy: "date_added",
+      order: "desc",
+    });
 
-    while (hasMore && page <= 10) {
-      const batch = await ghlRequest("/contacts/", apiKey, {
-        limit: "100",
-        sortBy: "date_added",
-        order: "desc",
-      });
-
-      const contacts = batch?.contacts || [];
-      allContacts = allContacts.concat(contacts);
-      hasMore = false; // GHL pagination needs cursor - for now get first batch
-      page++;
-    }
-
+    const allContacts = batch?.contacts || [];
     console.log(`GHL returned ${allContacts.length} contacts`);
 
     const items = allContacts.map((contact) => {
