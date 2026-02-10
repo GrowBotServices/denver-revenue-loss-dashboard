@@ -4,91 +4,145 @@ const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const GHL_BASE = "https://services.leadconnectorhq.com";
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// Helper to call Monday.com API
-async function mondayQuery(apiKey, query) {
-  const response = await fetch("https://api.monday.com/v2", {
-    method: "POST",
+// Helper to call GHL API
+async function ghlRequest(endpoint, apiKey, params = {}) {
+  const url = new URL(endpoint, GHL_BASE);
+  for (const [k, v] of Object.entries(params)) {
+    url.searchParams.set(k, v);
+  }
+  const response = await fetch(url.toString(), {
     headers: {
-      "Content-Type": "application/json",
-      Authorization: apiKey,
+      Authorization: `Bearer ${apiKey}`,
+      Version: "2021-07-28",
+      Accept: "application/json",
     },
-    body: JSON.stringify({ query }),
   });
-  return response.json();
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(`GHL ${response.status}: ${JSON.stringify(data)}`);
+  }
+  return data;
 }
 
-// Diagnostic endpoint - shows what Monday.com actually has
-app.get("/api/monday/diagnose", async (req, res) => {
-  const apiKey = process.env.MONDAY_API_KEY;
-  const boardId = process.env.MONDAY_BOARD_ID || "5089267332";
-
-  if (!apiKey) return res.status(500).json({ error: "MONDAY_API_KEY not set" });
+// Diagnostic endpoint - shows raw GHL data so we can map fields
+app.get("/api/ghl/diagnose", async (req, res) => {
+  const apiKey = process.env.GHL_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: "GHL_API_KEY not set in Render environment variables" });
 
   try {
-    // Check board info and groups
-    const boardInfo = await mondayQuery(apiKey, `query { boards(ids: [${boardId}]) { name state board_kind groups { id title archived } columns { id title type } } }`);
+    const contacts = await ghlRequest("/contacts/", apiKey, {
+      limit: "20",
+      sortBy: "date_added",
+      order: "desc",
+    });
 
-    // Try active items count
-    const activeItems = await mondayQuery(apiKey, `query { boards(ids: [${boardId}]) { items_page(limit: 5) { items { id name created_at } } } }`);
-
-    // Try archived items
-    const archivedItems = await mondayQuery(apiKey, `query { boards(ids: [${boardId}]) { items_page(limit: 5, query_params: { rules: [] }) { items { id name created_at } } } }`);
-
-    // Try board activity log to see what happened to items
-    const activity = await mondayQuery(apiKey, `query { boards(ids: [${boardId}]) { activity_logs(limit: 20) { event data created_at } } }`);
+    let customFields = null;
+    try {
+      customFields = await ghlRequest("/locations/custom-fields", apiKey);
+    } catch (e) {
+      customFields = { error: e.message };
+    }
 
     res.json({
-      board: boardInfo?.data?.boards?.[0] || null,
-      activeItemsSample: activeItems?.data?.boards?.[0]?.items_page?.items || [],
-      archivedItemsSample: archivedItems?.data?.boards?.[0]?.items_page?.items || [],
-      recentActivity: activity?.data?.boards?.[0]?.activity_logs || [],
-      raw: { boardInfo, activeItems, archivedItems }
+      status: "ok",
+      contactCount: contacts?.contacts?.length || 0,
+      sampleContacts: (contacts?.contacts || []).slice(0, 5).map((c) => ({
+        id: c.id,
+        name: `${c.firstName || ""} ${c.lastName || ""}`.trim(),
+        phone: c.phone,
+        dateAdded: c.dateAdded,
+        tags: c.tags,
+        source: c.source,
+        customFields: c.customFields || [],
+        allKeys: Object.keys(c),
+      })),
+      customFieldDefinitions: customFields,
+      rawFirstContact: contacts?.contacts?.[0] || null,
     });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
 });
 
-// Main data endpoint - tries active then archived
+// Main data endpoint - pulls contacts from GHL, formats for dashboard
 app.get("/api/monday", async (req, res) => {
-  const apiKey = process.env.MONDAY_API_KEY;
-  const boardId = process.env.MONDAY_BOARD_ID || "5089267332";
-
+  const apiKey = process.env.GHL_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: "MONDAY_API_KEY not set" });
+    return res.status(500).json({ error: "GHL_API_KEY not set" });
   }
 
-  const colFields = "column_values { id text value }";
-
   try {
-    // First try: active items
-    const activeQuery = `query { boards(ids: [${boardId}]) { items_page(limit: 500) { items { id name created_at ${colFields} } } } }`;
-    const activeData = await mondayQuery(apiKey, activeQuery);
-    const activeItems = activeData?.data?.boards?.[0]?.items_page?.items || [];
+    let allContacts = [];
+    let hasMore = true;
+    let page = 1;
 
-    // Second: archived items
-    const archiveQuery = `query { boards(ids: [${boardId}]) { items_page(limit: 500, query_params: { include_archived: true }) { items { id name created_at ${colFields} } } } }`;
-    const archiveData = await mondayQuery(apiKey, archiveQuery);
-    const archiveItems = archiveData?.data?.boards?.[0]?.items_page?.items || [];
+    while (hasMore && page <= 10) {
+      const batch = await ghlRequest("/contacts/", apiKey, {
+        limit: "100",
+        sortBy: "date_added",
+        order: "desc",
+      });
 
-    // Combine and deduplicate
-    const allMap = new Map();
-    for (const item of [...activeItems, ...archiveItems]) {
-      allMap.set(item.id, item);
+      const contacts = batch?.contacts || [];
+      allContacts = allContacts.concat(contacts);
+      hasMore = false; // GHL pagination needs cursor - for now get first batch
+      page++;
     }
-    const allItems = Array.from(allMap.values());
-    console.log(`Found ${activeItems.length} active + ${archiveItems.length} archived = ${allItems.length} unique items`);
 
-    return res.json({ data: { boards: [{ items_page: { items: allItems } }] } });
+    console.log(`GHL returned ${allContacts.length} contacts`);
 
+    const items = allContacts.map((contact) => {
+      const cf = {};
+      if (Array.isArray(contact.customFields)) {
+        for (const f of contact.customFields) {
+          cf[f.id] = f.value;
+          if (f.key) cf[f.key] = f.value;
+          if (f.field_key) cf[f.field_key] = f.value;
+        }
+      }
+
+      const description = cf.call_summary || cf.callSummary || cf.call_transcript ||
+        cf.transcript || cf.notes || cf.description || cf.job_description ||
+        cf.callNotes || cf.call_notes || contact.notes || "";
+
+      const boilerType = cf.boiler_type || cf.boilerType || cf.appliance_type ||
+        cf.system_type || "";
+
+      const callSource = cf.call_source || cf.callSource || cf.lead_source ||
+        contact.source || "";
+
+      const tags = (contact.tags || []).join(" ").toLowerCase();
+
+      return {
+        id: contact.id,
+        name: `${contact.firstName || ""} ${contact.lastName || ""}`.trim() || "Unknown",
+        created_at: contact.dateAdded || new Date().toISOString(),
+        column_values: [
+          { id: "long_text_mkyw56xd", text: description, value: null },
+          { id: "dropdown_mkyw8ax3", text: boilerType, value: null },
+          { id: "text_mkyw1az7", text: callSource, value: null },
+          { id: "date_mkyw2x9h", text: contact.dateAdded || "", value: null },
+          { id: "color_mkzpja00", text: "", value: JSON.stringify({ label: tags.match(/book|confirm|complete|done/) ? "Booked" : "Pending" }) },
+          { id: "phone_mkywvsvx", text: contact.phone || "", value: null },
+          { id: "text_mkywvcy1", text: cf.postcode || cf.postal_code || contact.postalCode || "", value: null },
+        ],
+      };
+    });
+
+    res.json({
+      data: { boards: [{ items_page: { items } }] },
+      _source: "ghl",
+      _count: allContacts.length,
+    });
   } catch (err) {
-    console.error("Monday.com API error:", err.message);
-    res.status(502).json({ error: "Failed to reach Monday.com" });
+    console.error("GHL API error:", err.message);
+    res.status(502).json({ error: `GHL API error: ${err.message}` });
   }
 });
 
