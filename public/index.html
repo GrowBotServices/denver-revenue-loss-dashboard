@@ -3,12 +3,11 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Denver Services - Revenue Leakage Dashboard</title>
-<script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
-<script crossorigin src="https://unpkg.com/recharts@2.1.16/umd/Recharts.js"></script>
-<script crossorigin src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
+<title>Denver Services - Revenue Generation Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.8.0/Recharts.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #0a0a0a; font-family: system-ui, -apple-system, sans-serif; }
@@ -27,7 +26,7 @@
 </style>
 </head>
 <body>
-<div id="root"><div style="min-height:100vh;background:#0a0a0a;display:flex;align-items:center;justify-content:center;color:#666;font-family:system-ui;text-align:center;padding:40px"><div><p style="font-size:14px;margin-bottom:10px">Loading dashboard...</p><p style="font-size:12px;color:#444">If this message stays, check browser console for errors.</p></div></div></div>
+<div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect, useMemo, Fragment } = React;
 const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } = Recharts;
@@ -160,7 +159,7 @@ const CAPTURE_LABELS = {
   "speed-response": { label: "Instant Response", desc: "Answered before customer moved on", icon: "\u{26A1}" },
 };
 const PIE_COLORS = ["#f59e0b", "#ef4444", "#22c55e", "#3b82f6"];
-const GROWBOT_COST = 1997;
+const INSTALLEROS_COST = 1997;
 const fmt = (v) => "\u00A3" + v.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const fmtD = (iso) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 const fmtT = (iso) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -219,7 +218,7 @@ function RevenueDashboard() {
     const wm = { "1week": 1, "2weeks": 0.5, "4weeks": 0.25 }[range] || 0.25;
     const wa = rev * wm; const mo = wa * 4.33; const yr = mo * 12;
     const rd = { "1week": 0.25, "2weeks": 0.5, "4weeks": 1 }[range] || 1;
-    const roi = rev / (GROWBOT_COST * rd);
+    const roi = rev / (INSTALLEROS_COST * rd);
     return { rev, total, booked, rate: total > 0 ? ((booked / total) * 100).toFixed(1) : "0", byCap, byJob, daily: Object.values(daily).reverse(), mo, yr, roi, avg: total > 0 ? Math.round(rev / total) : 0 };
   }, [filtered, range]);
 
@@ -251,8 +250,8 @@ function RevenueDashboard() {
                   {src === "live" ? "Live \u00B7 Monday.com" : "Sample Data"} \u00B7 Denver Services
                 </span>
               </div>
-              <h1 style={{ fontSize: 24, fontWeight: 700, color: "#fff", margin: 0, letterSpacing: -0.5 }}>Revenue Leakage Dashboard</h1>
-              <p style={{ color: "#555", fontSize: 13, margin: "4px 0 0", maxWidth: 500 }}>Revenue captured by Jessica that would have otherwise been lost.</p>
+              <h1 style={{ fontSize: 24, fontWeight: 700, color: "#fff", margin: 0, letterSpacing: -0.5 }}>Revenue Generation Dashboard</h1>
+              <p style={{ color: "#555", fontSize: 13, margin: "4px 0 0", maxWidth: 500 }}>Additional revenue captured by InstallerOS channels.</p>
             </div>
             <div style={{ display: "flex", gap: 4, background: "#111", borderRadius: 10, padding: 3, border: "1px solid #1a1a1a" }}>
               {[{ key: "1week", label: "7 Days" }, { key: "2weeks", label: "14 Days" }, { key: "4weeks", label: "4 Weeks" }].map(({ key, label }) => (
@@ -300,7 +299,7 @@ function RevenueDashboard() {
         <div className="fade-up" style={{ marginTop: 12, background: "#0f1a0f", border: "1px solid #1a2a1a", borderRadius: 10, padding: "14px 20px", display: "flex", alignItems: "center", gap: 14, animationDelay: "0.1s" }}>
           <span style={{ fontSize: 18 }}>{"\u{1F4B0}"}</span>
           <p style={{ margin: 0, color: "#6ee7b7", fontSize: 13 }}>
-            <strong>GrowBot costs {fmt(GROWBOT_COST)}/month.</strong> Jessica has captured {fmt(stats.rev)} in revenue that would have leaked - that's a <strong>{stats.roi.toFixed(1)}x return</strong> on your investment this period.
+            <strong>InstallerOS costs {fmt(INSTALLEROS_COST)}/month.</strong> Jessica has captured {fmt(stats.rev)} in revenue that would have leaked - that's a <strong>{stats.roi.toFixed(1)}x return</strong> on your investment this period.
           </p>
         </div>
 
@@ -435,7 +434,7 @@ function RevenueDashboard() {
         </div>
 
         <div style={{ marginTop: 28, padding: "16px 0", borderTop: "1px solid #1a1a1a", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-          <p style={{ color: "#333", fontSize: 11, margin: 0, fontFamily: "monospace" }}>Denver Services \u00B7 Revenue Leakage Dashboard \u00B7 Powered by GrowBot</p>
+          <p style={{ color: "#333", fontSize: 11, margin: 0, fontFamily: "monospace" }}>Denver Services \u00B7 Revenue Generation Dashboard \u00B7 Powered by InstallerOS</p>
           <p style={{ color: "#333", fontSize: 11, margin: 0, fontFamily: "monospace" }}>{src === "live" ? "Data source: Monday.com \u00B7 Live" : "Sample data \u00B7 Fallback mode"}</p>
         </div>
       </div>
